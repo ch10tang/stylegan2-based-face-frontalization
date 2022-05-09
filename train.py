@@ -162,11 +162,6 @@ def train(args, loader_src, loader_norm, generator, discriminator, ExpertModel, 
     shutil.copy('./train.py', './{}/train.py'.format(CheckpointSavePath))
     shutil.copy('./model.py', './{}/model.py'.format(CheckpointSavePath))
 
-    # Reference Constant Map
-    ConstantMap = Image.open('./ReferenceMap/{}.png'.format(args.mean_face))
-    ConstantMap = transforms.ToTensor()(ConstantMap).unsqueeze_(0).to(device).repeat(args.batch, 1, 1, 1)
-
-
     loader_src = sample_data(loader_src)
     loader_norm = sample_data(loader_norm)
 
@@ -209,10 +204,10 @@ def train(args, loader_src, loader_norm, generator, discriminator, ExpertModel, 
         requires_grad(generator, False)
         requires_grad(discriminator, True)
 
-        Profile_Fea, _ = ExpertModel(TrainingSize_Select(real_img, args), args)
-        Profile_Syn_Img, _ = generator(Profile_Fea, ConstantMap)
-        Front_Fea, _ = ExpertModel(TrainingSize_Select(tgt_img, args), args)
-        Front_Syn_Img, _ = generator(Front_Fea, ConstantMap)
+        Profile_Fea, Profile_Map = ExpertModel(TrainingSize_Select(real_img, device, args), args)
+        Profile_Syn_Img, _ = generator(Profile_Fea, Profile_Map)
+        Front_Fea, Front_Map = ExpertModel(TrainingSize_Select(tgt_img, device, args), args)
+        Front_Syn_Img, _ = generator(Front_Fea, Front_Map)
 
         Profile_Syn_Pred = discriminator(Profile_Syn_Img)
         Front_Syn_Pred = discriminator(Front_Syn_Img)
@@ -244,15 +239,15 @@ def train(args, loader_src, loader_norm, generator, discriminator, ExpertModel, 
         requires_grad(generator, True)
         requires_grad(discriminator, False)
 
-        Front_Fea, Front_Map = ExpertModel(TrainingSize_Select(tgt_img, args), args)
-        Front_Syn_Img, _ = generator(Front_Fea, ConstantMap)
+        Front_Fea, Front_Map = ExpertModel(TrainingSize_Select(tgt_img, device, args), args)
+        Front_Syn_Img, _ = generator(Front_Fea, Front_Map)
         Front_Syn_Pred = discriminator(Front_Syn_Img)
-        Front_Syn_Fea, _ = ExpertModel(TrainingSize_Select(Front_Syn_Img, args), args)
+        Front_Syn_Fea, _ = ExpertModel(TrainingSize_Select(Front_Syn_Img, device, args), args)
 
-        Profile_Fea, _ = ExpertModel(TrainingSize_Select(real_img, args), args)
-        Profile_Syn_Img, _ = generator(Profile_Fea, ConstantMap)
+        Profile_Fea, Profile_Map = ExpertModel(TrainingSize_Select(real_img, device, args), args)
+        Profile_Syn_Img, _ = generator(Profile_Fea, Profile_Map)
         Profile_Syn_Pred = discriminator(Profile_Syn_Img)
-        Profile_Syn_Fea, _ = ExpertModel(TrainingSize_Select(Profile_Syn_Img, args), args)
+        Profile_Syn_Fea, _ = ExpertModel(TrainingSize_Select(Profile_Syn_Img, device, args), args)
 
         adv_g_loss = (g_nonsaturating_loss(Profile_Syn_Pred) + g_nonsaturating_loss(Front_Syn_Pred)) / 2
         fea_loss = (feature_loss(Profile_Syn_Fea[0], Profile_Fea[0]) + feature_loss(Front_Syn_Fea[0], Front_Fea[0])) / 2
@@ -271,8 +266,8 @@ def train(args, loader_src, loader_norm, generator, discriminator, ExpertModel, 
         g_regularize = i % args.g_reg_every == 0
 
         if g_regularize:
-            noise, _ = ExpertModel(TrainingSize_Select(real_img, args), args)
-            fake_img, latents = generator(noise, ConstantMap, return_latents=True)
+            noise, noise_map = ExpertModel(TrainingSize_Select(real_img, device, args), args)
+            fake_img, latents = generator(noise, noise_map, return_latents=True)
 
             path_loss, mean_path_length, path_lengths = g_path_regularize(
                 fake_img, latents, mean_path_length
@@ -336,10 +331,10 @@ def train(args, loader_src, loader_norm, generator, discriminator, ExpertModel, 
             if i % 100 == 0:
                 with torch.no_grad():
                     g_ema.eval()
-                    pro_fea, _ = ExpertModel(TrainingSize_Select(real_img, args), args)
-                    pro_syn, _ = g_ema(pro_fea, ConstantMap)
-                    tgt_fea, _ = ExpertModel(TrainingSize_Select(tgt_img, args), args)
-                    tgt_syn, _ = g_ema(tgt_fea, ConstantMap)
+                    pro_fea, pro_map = ExpertModel(TrainingSize_Select(real_img, device, args), args)
+                    pro_syn, _ = g_ema(pro_fea, pro_map)
+                    tgt_fea, tgt_map = ExpertModel(TrainingSize_Select(tgt_img, device, args), args)
+                    tgt_syn, _ = g_ema(tgt_fea, tgt_map)
 
                     result = torch.cat([real_img, pro_syn, tgt_img, tgt_syn], 2)
                     utils.save_image(
@@ -350,7 +345,7 @@ def train(args, loader_src, loader_norm, generator, discriminator, ExpertModel, 
                         range=(-1, 1),
                     )
 
-            if i % 2000 == 0:
+            if i % 100 == 0:
                 torch.save(
                     {
                         "g": g_module.state_dict(),
@@ -369,12 +364,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--path_src", type=str, default='../../Database/LMDB/Test_CASIA_LMDB')
-    parser.add_argument("--path_norm", type=str, default='../../Database/LMDB/MPIE_FOCropped_051deg_512_512_168')
-    parser.add_argument("--mean_face", type=str, default='MeanFace_Frontal_Gray')
+    parser.add_argument("--path_norm", type=str, default='../../Database/LMDB/Test_MPIE_LMDB')
     parser.add_argument("--iter", type=int, default=300000)
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--n_sample", type=int, default=64)
-    parser.add_argument("--size", type=int, default=256)
+    parser.add_argument("--size", type=int, default=128)
     parser.add_argument("--r1", type=float, default=10)
     parser.add_argument("--path_regularize", type=float, default=2)
     parser.add_argument("--path_batch_shrink", type=int, default=2)
@@ -424,7 +418,7 @@ if __name__ == "__main__":
     args.start_iter = 0
 
     generator = Generator(args.size, args.latent, args, channel_multiplier=args.channel_multiplier).to(device)
-    discriminator = Discriminator(args.size, channel_multiplier=args.channel_multiplier).to(device)
+    discriminator = Discriminator(args.size, args, channel_multiplier=args.channel_multiplier).to(device)
     g_ema = Generator(args.size, args.latent, args, channel_multiplier=args.channel_multiplier).to(device)
     ExpertModel = ExpertModel.to(device)
     g_ema.eval()
@@ -479,20 +473,23 @@ if __name__ == "__main__":
 
     transform = transforms.Compose(
         [
+            transforms.Resize(args.size),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True),
         ]
     )
 
-    dataset_src = MultiResolutionDataset(args.path_src, transform, args.size)
+    # dataset_src = MultiResolutionDataset(args.path_src, transform, args.size)
+    dataset_src = MultiResolutionDataset(args.path_src, transform, 256)
     loader_src = data.DataLoader(
         dataset_src,
         batch_size=args.batch,
         sampler=data_sampler(dataset_src, shuffle=True, distributed=args.distributed),
         drop_last=True,
     )
-    dataset_norm = MultiResolutionDataset(args.path_norm, transform, args.size)
+    # dataset_norm = MultiResolutionDataset(args.path_norm, transform, args.size)
+    dataset_norm = MultiResolutionDataset(args.path_norm, transform, 256)
     loader_norm = data.DataLoader(
         dataset_norm,
         batch_size=args.batch,

@@ -400,16 +400,12 @@ class Generator(nn.Module):
             conv_Trans.append(ConvLayer(args.latent, args.latent, 1))
         self.conv_Trans = nn.Sequential(*conv_Trans)
 
-        # Modified 0701
-        self.conv1 = StyledConv(
-            style_dim, self.channels[4], 3, style_dim, blur_kernel=blur_kernel
-        )
+
+        self.conv1 = StyledConv(style_dim, self.channels[4], 3, style_dim, blur_kernel=blur_kernel)
         self.to_rgb1 = ToRGB(self.channels[4], style_dim, upsample=False)
 
         self.log_size = int(math.log(size, 2))
-
         self.num_layers = (self.log_size - 2) * 2 + 1
-
         self.convs = nn.ModuleList()
         self.upsamples = nn.ModuleList()
         self.to_rgbs = nn.ModuleList()
@@ -478,7 +474,7 @@ class Generator(nn.Module):
     def forward(
             self,
             styles,
-            constant_map,
+            feature_map,
             return_latents=False,
             noise=None,
             randomize_noise=True,
@@ -491,9 +487,7 @@ class Generator(nn.Module):
                 noise = [getattr(self.noises, f'noise_{i}') for i in range(self.num_layers)]
 
         latent = styles[0].unsqueeze(1).repeat(1, self.n_latent, 1)
-        constant_in = self.input(latent) #+ \
-                      # self.fit_input_shape(constant_map, self.input(latent).shape[2], self.input(latent).shape[1])
-
+        constant_in = self.input(latent)
         out = self.conv_Trans(constant_in)
         out = self.conv1(out, latent[:, 0], noise=noise[0])
         skip = self.to_rgb1(out, latent[:, 1])
@@ -502,9 +496,7 @@ class Generator(nn.Module):
         for conv1, conv2, noise1, noise2, to_rgb in zip(
                 self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
         ):
-            # constant_med_in = self.fit_input_shape(constant_map, conv1(out, latent[:, i], noise=noise1).shape[2],
-            #                                        conv1(out, latent[:, i], noise=noise1).shape[1])
-            out = conv1(out, latent[:, i], noise=noise1) #+ constant_med_in
+            out = conv1(out, latent[:, i], noise=noise1)
             out = conv2(out, latent[:, i + 1], noise=noise2)
             skip = to_rgb(out, latent[:, i + 2], skip)
             i += 2
@@ -589,7 +581,7 @@ class ResBlock(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, size, channel_multiplier=2, blur_kernel=[1, 3, 3, 1]):
+    def __init__(self, size, args, channel_multiplier=2, blur_kernel=[1, 3, 3, 1]):
         super().__init__()
 
         channels = {
@@ -603,7 +595,7 @@ class Discriminator(nn.Module):
             512: 32 * channel_multiplier,
             1024: 16 * channel_multiplier,
         }
-
+        self.input_size = args.size
         convs = [ConvLayer(3, channels[size], 1)]
         log_size = int(math.log(size, 2))
         in_channel = channels[size]
@@ -623,6 +615,7 @@ class Discriminator(nn.Module):
             EqualLinear(channels[4] * 4 * 4, channels[4], activation='fused_lrelu'),
             EqualLinear(channels[4], 1),
         )
+
 
         # self.convs_lr = nn.Sequential(*convs)
         # self.final_conv_lr = ConvLayer(in_channel + 1, channels[4], 3)
@@ -667,7 +660,10 @@ class Discriminator(nn.Module):
 
     def slice(self, input):
 
-        face = input[:, :, 40:40 + 150, 34:34 + 156]
+        if self.input_size == 256:
+            face = input[:, :, 40:40 + 150, 34:34 + 156]
+        elif self.input_size == 128:
+            face = input[:, :, 20:20 + 75, 17:17 + 78]
 
         return face
 
@@ -692,10 +688,9 @@ class Discriminator(nn.Module):
         out, batch = self.std_calculate(out)
         out = self.final_conv(out)
         out = out.view(batch, -1)
-        # print(out.shape)
         out = self.final_linear(out)
 
-        # # global region with low resolution
+        # # global region with low resolution (p2pHD)
         # out_lr = self.convs_lr(self.down_sample(input))
         # out_lr, batch = self.std_calculate(out_lr)
         # out_lr = self.final_conv_lr(out_lr)
@@ -710,7 +705,7 @@ class Discriminator(nn.Module):
         out_l = out_l.view(batch, -1)
         out_l = self.final_linear_l(out_l)
 
-        # # local region with low resolution
+        # # local region with low resolution (p2pHD)
         # face_ROI_lr = self.slice(self.down_sample(input))
         # out_l_lr = self.convs_l_lr(face_ROI_lr)
         # out_l_lr, batch = self.std_calculate(out_l_lr)

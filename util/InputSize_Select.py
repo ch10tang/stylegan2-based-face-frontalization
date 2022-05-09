@@ -1,5 +1,6 @@
 import torchvision
 from torchvision import transforms
+import torch
 import torch.nn.functional as F
 
 def Transform_Select(args):
@@ -23,13 +24,14 @@ def Transform_Select(args):
                                                              (0.5, 0.5, 0.5))])
     return transform
 
-def TrainingSize_Select(img, args):
+def TrainingSize_Select(img, device, args):
     # Input range [-1, 1]
 
     if args.model_select =='VGGFace2':
         # Input range [0, 255]
         Input = 224
-        transform = F.interpolate((img + 1) * 127.5, size=Input)
+        normalized = (((img.cpu() + 1) * 127.5) - torch.Tensor([131.0912, 103.8827, 91.4953]).view((3, 1, 1))).to(device)
+        transform = F.interpolate(normalized, size=Input)
 
     elif args.model_select == 'Light_CNN_9' or args.model_select == 'Light_CNN_29' or args.model_select == 'Light_CNN_29_v2':
         # Input range [0, 1]
